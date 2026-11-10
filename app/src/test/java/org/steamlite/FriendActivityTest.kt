@@ -1,0 +1,53 @@
+package org.steamlite
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class FriendActivityTest {
+    @Test fun emptySourcesCannotBecomeTheSteamHomepageImage() {
+        val card = FriendActivityParser.parse("""<div class="blotter_block">截图<img src=""><img src=" "><img src="https://steamcommunity.com/"><img src="https://images.steamusercontent.com/ugc/example/photo.jpg"></div>""").single()
+        assertEquals(listOf("https://images.steamusercontent.com/ugc/example/photo.jpg"), card.images)
+    }
+    @Test fun lazyImagesUseTheirRealSourceInsteadOfAnEmptyPlaceholder() {
+        val first = "https://images.steamusercontent.com/ugc/example/one.jpg"
+        val second = "https://images.steamusercontent.com/ugc/example/two.jpg"
+        val card = FriendActivityParser.parse("""<div class="blotter_block">截图<img src="" data-src="$first"><img data-lazy-src="$second"></div>""").single()
+        assertEquals(listOf(first, second), card.images)
+    }
+    @Test fun unsafeLazySourcesDoNotOverrideAValidImageAndEmptyAvatarStaysEmpty() {
+        val url = "https://images.steamusercontent.com/ugc/example/photo.jpg"
+        val card = FriendActivityParser.parse("""<div class="blotter_block">截图<div class="playerAvatar"><img src=""></div><img data-src="https://evil.example/image.jpg" src="$url"></div>""").single()
+        assertNull(card.avatar)
+        assertEquals(listOf(url), card.images)
+    }
+    @Test fun feedOmitsCommentEditorControlsAndKeepsOriginalActivity() {
+        val card = FriendActivityParser.parse("""<div class="blotter_block"><a class="blotter_author_block" href="/profiles/123">测试好友</a><p>发布了一张截图</p><div class="commentthread_area">订阅讨论中 格式帮助 提交留言</div></div>""").single()
+        assertEquals("测试好友", card.author)
+        assertTrue(card.text.contains("发布了一张截图"))
+        assertFalse(card.text.contains("格式帮助"))
+    }
+    @Test fun authorAvatarDoesNotBecomeAnActivityPhoto() {
+        val card = FriendActivityParser.parse("""<div class="blotter_block"><div class="blotter_player_avatar"><img src="https://avatars.steamstatic.com/example.jpg"></div><div class="blotter_author_block"><a href="/profiles/123">测试好友</a></div><p>发布了截图</p><img src="https://images.steamusercontent.com/ugc/example/photo.jpg"></div>""").single()
+        assertEquals("测试好友", card.author)
+        assertEquals("https://avatars.steamstatic.com/example.jpg", card.avatar)
+        assertEquals(listOf("https://images.steamusercontent.com/ugc/example/photo.jpg"), card.images)
+    }
+    @Test fun unwrappedAvatarsAreNotEnlargedAsActivityPhotos() {
+        val card = FriendActivityParser.parse("""<div class="blotter_block">好友活动<img src="https://avatars.steamstatic.com/person.jpg"><img src="https://images.steamusercontent.com/ugc/photo.jpg"></div>""").single()
+        assertEquals(listOf("https://images.steamusercontent.com/ugc/photo.jpg"), card.images)
+    }
+    @Test fun paginationCannotSendCredentialsToAnotherOriginOrEndpoint() {
+        assertTrue(FriendActivityParser.allowedPage("https://steamcommunity.com/profiles/123/ajaxgetusernews/?start=10"))
+        assertTrue(FriendActivityParser.allowedPage("https://steamcommunity.com/id/test/ajaxgetusernews"))
+        listOf("https://steamcommunity.com.evil.example/profiles/123/ajaxgetusernews", "http://steamcommunity.com/profiles/123/ajaxgetusernews", "https://user@steamcommunity.com/profiles/123/ajaxgetusernews", "https://steamcommunity.com:8443/profiles/123/ajaxgetusernews", "https://steamcommunity.com/login/").forEach { assertFalse(it, FriendActivityParser.allowedPage(it)) }
+    }
+    @Test fun nativeCardsKeepRealTextDatesAndSafeLinksWithoutScripts() {
+        val html = """<div class="blotter_day"><div class="blotter_day_header_date">今天</div><div class="blotter_block" id="item1"><p>测试好友 获得了一项成就</p><script>hidden()</script><a href="/app/123">游戏</a><a href="javascript:alert(1)">unsafe</a><img src="https://images.steamusercontent.com/ugc/test/image.png"><img src="https://untrusted.example/image.png"></div></div>"""
+        val card = FriendActivityParser.parse(html).single()
+        assertEquals("item1", card.id); assertEquals("今天", card.day)
+        assertTrue(card.text.contains("获得了一项成就")); assertFalse(card.text.contains("hidden()"))
+        assertEquals(listOf("https://images.steamusercontent.com/ugc/test/image.png"), card.images)
+        assertEquals(listOf("游戏" to "https://steamcommunity.com/app/123"), card.links)
+    }
+    @Test fun emptyFeedDoesNotInventActivity() { assertTrue(FriendActivityParser.parse("<div class='blotter_day'></div>").isEmpty()) }
+}

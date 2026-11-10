@@ -1,0 +1,17 @@
+syntax = "proto2";
+package org.steamlite.protocol;
+option java_outer_classname = "VoiceProtocol";
+message EmptyVoice {}
+message VoiceOffer { optional string sdp=1; optional string browser_name=2; optional string browser_version=3; }
+message RemoteVoice { optional string remote_description=1; }
+message VoicePeer { optional fixed64 steamid_partner=1; }
+message VoiceId { optional fixed64 voice_chatid=1; }
+message VoiceAnswer { optional fixed64 voice_chatid=1; optional fixed64 steamid_partner=2; optional bool accepted_request=3; }
+message VoiceConnected { optional uint32 ssrc=1; optional uint32 client_ip=2; optional uint32 client_port=3; optional uint32 server_ip=4; optional uint32 server_port=5; }
+message VoiceRemoteUpdate { optional string remote_description=1; optional uint64 remote_description_version=2; }
+message VoiceRenegotiate { optional uint32 ip_webrtc_server=1; optional uint32 port_webrtc_server=2; optional uint32 ip_webrtc_session_client=3; optional uint32 port_webrtc_session_client=4; optional string sdp=5; }
+message VoiceAck { optional uint32 ip_webrtc_server=1; optional uint32 port_webrtc_server=2; optional uint32 ip_webrtc_session_client=3; optional uint32 port_webrtc_session_client=4; optional uint64 remote_description_version=5; }
+message VoiceBind { optional fixed64 voice_chatid=1; optional uint32 ip_webrtc_server=2; optional uint32 port_webrtc_server=3; optional uint32 ip_webrtc_client=4; optional uint32 port_webrtc_client=5; optional uint32 ssrc_my_sending_stream=6; optional string user_agent=7; optional bool has_audio_worklets_support=8; }
+message VoiceIncoming { optional fixed64 voice_chatid=1; optional fixed64 steamid_partner=2; }
+message VoiceAccepted { optional fixed64 voicechat_id=1; optional fixed64 steamid_partner=2; optional bool accepted_request=3; }
+message VoiceEnded { optional fixed64 voice_chatid=1; }

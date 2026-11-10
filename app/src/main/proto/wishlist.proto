@@ -1,0 +1,24 @@
+// Wire field numbers verified against SteamTracking/Protobufs webui/service_wishlist.proto.
+// This small client schema intentionally excludes unrelated wishlist category features.
+syntax = "proto2";
+package org.steamlite.protocol;
+option java_outer_classname = "WishProtocol";
+message GetRequest { optional fixed64 steamid = 1; }
+message WishItem { optional uint32 appid = 1; optional uint32 priority = 2; optional uint32 date_added = 3; }
+message GetResponse { repeated WishItem items = 1; }
+message AddRequest { optional uint32 appid = 1; }
+message AddResponse { optional uint32 wishlist_count = 1; }
+message RemoveRequest { optional uint32 appid = 1; }
+message RemoveResponse { optional uint32 wishlist_count = 1; }
+message ItemID { optional uint32 appid = 1; }
+message BrowseContext { optional string language = 1; optional string country_code = 3; }
+message DataRequest { optional bool include_release = 2; optional bool include_best_purchase_option = 19 [default = true]; }
+message BrowseRequest { repeated ItemID ids = 1; optional BrowseContext context = 2; optional DataRequest data_request = 3; }
+message Release { optional uint32 steam_release_date = 1; optional bool is_coming_soon = 4; }
+message Purchase { optional int64 final_price_in_cents = 5; optional string formatted_final_price = 8; optional int32 discount_pct = 10; }
+message StoreItem {
+  optional uint32 id = 2; optional uint32 success = 3; optional string name = 6;
+  optional uint32 appid = 9; optional bool is_free = 13; optional Release release = 31;
+  optional bool is_coming_soon = 34; optional Purchase best_purchase_option = 40;
+}
+message BrowseResponse { repeated StoreItem store_items = 1; }

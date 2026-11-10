@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; media-src blob:;"></head><body><script>
+'use strict';
+let peer=null, mic=null, sinks=[], queue=Promise.resolve();
+function report(op, data={}) { VoiceBridge.event(JSON.stringify(Object.assign({op},data))); }
+function release() { if(mic) mic.getTracks().forEach(t=>t.stop()); mic=null; if(peer) { peer.oniceconnectionstatechange=null; peer.close(); } peer=null; sinks.forEach(a=>{a.pause();a.srcObject=null;a.remove()}); sinks=[]; }
+async function begin() {
+ release();
+ mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+ peer=new RTCPeerConnection({iceServers:[]});
+ mic.getTracks().forEach(track=>peer.addTrack(track,mic));
+ peer.ontrack=e=>{const a=document.createElement('audio');a.autoplay=true;a.srcObject=e.streams[0]||new MediaStream([e.track]);document.body.appendChild(a);sinks.push(a);a.play().catch(()=>report('failed'));};
+ peer.oniceconnectionstatechange=()=>{if(!peer)return;const state=peer.iceConnectionState;if(state==='connected'||state==='completed')report('ice');if(state==='failed')report('failed');};
+ const offer=await peer.createOffer({offerToReceiveAudio:true});
+ let text=offer.sdp; const opus=text.split('\r\n').find(line=>/^a=rtpmap:\d+ opus\//i.test(line));
+ if(opus){const id=opus.match(/^a=rtpmap:(\d+)/)[1];text=text.split('\r\n').map(line=>line.startsWith('a=fmtp:'+id+' ')?'a=fmtp:'+id+' minptime=10;useinbandfec=1;usedtx=1':line).join('\r\n');}
+ const local={type:'offer',sdp:text};await peer.setLocalDescription(local);
+ report('offer',{description:JSON.stringify(local),version:(navigator.userAgent.match(/Chrome\/([\d.]+)/)||[])[1]||'0'});
+}
+async function receive(c) {
+ switch(c.op){
+ case 'start':await begin();break;
+ case 'answer':if(peer)await peer.setRemoteDescription(JSON.parse(c.description));break;
+ case 'remote':if(peer){const remote=JSON.parse(c.description);await peer.setRemoteDescription(remote);const response={version:c.version};if(remote.type==='offer'){const answer=await peer.createAnswer();await peer.setLocalDescription(answer);response.description=JSON.stringify({type:'answer',sdp:answer.sdp});}report('renegotiated',response);}break;
+ case 'mute':if(mic)mic.getAudioTracks().forEach(t=>t.enabled=!c.value);break;
+ case 'stop':release();break;
+ }
+}
+window.steamVoiceCommand=c=>{queue=queue.then(()=>receive(c)).catch(()=>{release();report('failed')});};
+window.addEventListener('pagehide',release);
+report('ready');
+</script></body></html>

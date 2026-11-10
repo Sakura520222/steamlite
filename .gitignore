@@ -1,0 +1,22 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+.env
+.env.*
+*.apk
+*.aab
+.idea/
+
+# Local development records and machine-specific build helper.
+/verification/
+/FEATURE_PROGRESS.md
+/DEVELOPER_HANDOFF.md
+/DEVELOPMENT_PROGRESS.md
+/TEST_RESULTS.md
+/TODO.md
+/build-local.ps1

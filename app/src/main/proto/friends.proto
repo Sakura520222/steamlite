@@ -1,0 +1,8 @@
+syntax = "proto2";
+package org.steamlite.protocol;
+option java_outer_classname = "FriendsProtocol";
+message Favorite { optional uint32 accountid=1; optional uint32 clanid=2; optional uint64 chat_group_id=3; }
+message GetFavoritesRequest {}
+message GetFavoritesResponse { repeated Favorite favorites=1; }
+message SetFavoritesRequest { repeated Favorite favorites=1; }
+message SetFavoritesResponse {}
