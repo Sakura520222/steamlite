@@ -14,6 +14,12 @@ Android 8.0 及以上 · 包名 `org.steamlite` · 无需自行编译
 
 </div>
 
+## 界面预览
+
+![Steam Lite 隐私化界面预览](docs/screenshots/preview-private.png)
+
+展示图经 AI 隐私化编辑，账号、好友头像、昵称、备注及统计为虚构示例，价格仅用于界面展示。
+
 ## 安装
 
 1. 点击上面的 **直接下载 APK**。不要下载 GitHub 自动提供的 Source code，那是源码。
