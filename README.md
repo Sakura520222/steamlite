@@ -4,6 +4,8 @@
 
 **原生 Android Steam 客户端 · 商店与愿望单 · 好友聊天 · 动态**
 
+[![Android build](https://github.com/zianyx6/steamlite/actions/workflows/android.yml/badge.svg)](https://github.com/zianyx6/steamlite/actions/workflows/android.yml)
+
 [![下载 Android 安装包](docs/download-apk.svg)](https://github.com/zianyx6/steamlite/releases/download/v1.0.0/SteamLite-1.0.0.apk)
 
 ### [⬇️ 直接下载 SteamLite-1.0.0.apk](https://github.com/zianyx6/steamlite/releases/download/v1.0.0/SteamLite-1.0.0.apk)
