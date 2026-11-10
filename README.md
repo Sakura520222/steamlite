@@ -6,9 +6,9 @@
 
 [![Android build](https://github.com/zianyx6/steamlite/actions/workflows/android.yml/badge.svg)](https://github.com/zianyx6/steamlite/actions/workflows/android.yml)
 
-[![下载 Android 安装包](docs/download-apk.svg)](https://github.com/zianyx6/steamlite/releases/download/v1.0.0/SteamLite-1.0.0.apk)
+[![下载 Android 安装包](docs/download-apk.svg)](https://github.com/zianyx6/steamlite/releases/download/v1.0.1/SteamLite-1.0.1.apk)
 
-### [⬇️ 直接下载 SteamLite-1.0.0.apk](https://github.com/zianyx6/steamlite/releases/download/v1.0.0/SteamLite-1.0.0.apk)
+### [⬇️ 直接下载 SteamLite-1.0.1.apk](https://github.com/zianyx6/steamlite/releases/download/v1.0.1/SteamLite-1.0.1.apk)
 
 [发行说明与全部附件](https://github.com/zianyx6/steamlite/releases/latest) · [问题反馈](https://github.com/zianyx6/steamlite/issues) · [MIT License](LICENSE)
 
