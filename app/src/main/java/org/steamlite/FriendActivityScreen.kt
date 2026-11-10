@@ -32,7 +32,7 @@ fun FriendActivityScreen(model: LiteModel) {
     var viewing by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(online, model.steam.owner) { if (online && items.isEmpty()) repo.refresh() }
 
-    Column(Modifier.fillMaxSize()) {
+    RefreshContainer(busy, { repo.refresh() }) { Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { PageHeader("动态") }
@@ -110,6 +110,7 @@ fun FriendActivityScreen(model: LiteModel) {
         }
     }
 
+    }
     viewing?.let { ImageViewer(it) { viewing = null } }
 }
 

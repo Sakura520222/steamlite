@@ -23,8 +23,14 @@ internal fun AboutSheet(close: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text("关于 Steam Lite", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Text1)
             Text("版本 $version", fontSize = 12.sp, color = Text3, modifier = Modifier.padding(top = 6.dp, bottom = 18.dp))
-            SettingsGroup { SettingsRow(Glyph.Mark, "项目仓库", "GitHub", showDivider = false,
-                onClick = { openSteamLink(context, "https://github.com/zianyx6/steamlite") }) }
+            SettingsGroup { SettingsRow(Glyph.Mark, "项目仓库", "用浏览器打开 GitHub", showDivider = false,
+                onClick = {
+                    val browser = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/zianyx6/steamlite"))
+                    browser.selector = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_APP_BROWSER)
+                    runCatching { context.startActivity(browser) }.onFailure {
+                        android.widget.Toast.makeText(context, "请先安装浏览器", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) }
             Text("查看源码、提交反馈和下载安装包", fontSize = 11.sp, color = Text3, modifier = Modifier.padding(vertical = 16.dp))
             GhostButton("关闭", close, Modifier.fillMaxWidth())
             Spacer(Modifier.height(20.dp))

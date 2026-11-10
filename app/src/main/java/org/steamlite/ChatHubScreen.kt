@@ -99,9 +99,19 @@ fun ChatHubScreen(model: LiteModel, openPeerId: Long?, onOpenPeer: (Long?) -> Un
     LaunchedEffect(page) { swipeMenus.clear() }
     var search by rememberSaveable { mutableStateOf("") }
 
+    val refreshScope = rememberCoroutineScope()
+    var refreshingHub by remember { mutableStateOf(false) }
     val unread = model.steam.recentSessions.collectAsState().value.sumOf { it.unread }
 
-    Column(Modifier.fillMaxSize()) {
+    RefreshContainer(refreshingHub, {
+        if (online && !refreshingHub) refreshScope.launch {
+            refreshingHub = true
+            try { model.steam.syncContacts(); model.steam.syncConversations(); model.community.syncGroups() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { /* Existing repository status exposes refresh failures. */ }
+            finally { refreshingHub = false }
+        }
+    }) { Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             PageHeader("消息")
             UnderlineTabs(listOf("好友", "会话", "群组"), page, { page = it }, unread)
@@ -133,6 +143,7 @@ fun ChatHubScreen(model: LiteModel, openPeerId: Long?, onOpenPeer: (Long?) -> Un
     }
 }
 
+}
 @Composable
 private fun FriendsPage(
     model: LiteModel,
@@ -405,6 +416,7 @@ fun ConversationScreen(model: LiteModel, friend: FriendRow, back: () -> Unit) {
     val flow = remember(friend.id, model.steam.owner, messageLimit) { model.db.dao().messages(model.steam.owner, friend.id, messageLimit) }
     val messages by flow.collectAsState(initial = emptyList())
     val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize()) {
         ChatTopBar(
@@ -477,6 +489,7 @@ fun ConversationScreen(model: LiteModel, friend: FriendRow, back: () -> Unit) {
         }
 
         MessageComposer(model, "friend:${friend.id}", online) { text, accepted ->
+            scrollScope.launch { listState.scrollToItem(0) }
             model.steam.send(friend.id, text)
             accepted()
         }
@@ -533,6 +546,9 @@ private data class BubbleRow(
 
 @Composable
 private fun ChatBubbleList(items: List<BubbleData>, modifier: Modifier, listState: androidx.compose.foundation.lazy.LazyListState) {
+    LaunchedEffect(items.lastOrNull()?.id) {
+        if (items.lastOrNull()?.outgoing == true || listState.firstVisibleItemIndex == 0) listState.scrollToItem(0)
+    }
     val rows = remember(items) {
         var lastDay: String? = null
         items.mapIndexed { index, item ->
@@ -1043,6 +1059,7 @@ private fun GroupChatView(
     val sending by repo.sending.collectAsState()
     val friends by model.steam.people.collectAsState()
     val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
 
     LaunchedEffect(group.id, channel?.id, online) {
         if (online && channel != null) {
@@ -1125,6 +1142,7 @@ private fun GroupChatView(
             ChatBubbleList(bubbles, Modifier.weight(1f).fillMaxWidth(), listState)
         }
         MessageComposer(model, "group:${group.id}:${channel.id}", online && !sending) { text, accepted ->
+            scrollScope.launch { listState.scrollToItem(0) }
             repo.sendGroup(group.id, channel.id, text, accepted)
         }
     }

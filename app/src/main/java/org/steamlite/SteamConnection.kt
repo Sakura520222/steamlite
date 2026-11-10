@@ -327,7 +327,7 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 scope.launch { runCatching { dao.deleteEmptyMessages() } }
                 friends.setPersonaState(EPersonaState.Online)
                 scope.launch { runCatching { withTimeout(20000) { personaChat.requestFriendPersonaStates(`in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesChatSteamclient.CChat_RequestFriendPersonaStates_Request.getDefaultInstance()).await() } } }
-            } else { guard.value = ""; needsGuardCode.value = false; interactiveLogin = false; status.value = "登录失败：${it.result}"; online.value = false; active = false; token = ""; vault.clear(); client.disconnect() }
+            } else { guard.value = ""; needsGuardCode.value = false; interactiveLogin = false; status.value = "登录失败：${it.result}"; online.value = false; active = false; if (it.result.toString() in setOf("InvalidPassword", "Expired", "Revoked", "AccessDenied")) { token = ""; vault.clear() }; client.disconnect() }
         }
         manager.subscribe(FriendsListCallback::class.java) {
             updateFriends()
@@ -439,6 +439,9 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         watchdog?.cancel(); authenticationJob?.cancel(); code?.cancel(true); code = null
         password = ""; guard.value = ""; needsGuardCode.value = false; status.value = "登录已取消"
         scope.launch { client.disconnect() }
+    }
+    fun resumeSession() {
+        if (token.isNotBlank() && !online.value && !busy.value) connect()
     }
     fun probeConnection() { if(active) return; probe = true; connect() }
     private fun connect() {

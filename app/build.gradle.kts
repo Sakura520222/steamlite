@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 android {
     namespace = "org.steamlite"
     compileSdk = 35
-    defaultConfig { applicationId = "org.steamlite"; minSdk = 26; targetSdk = 34; versionCode = 100; versionName = "1.0.0"; testInstrumentationRunner = "org.steamlite.ImageNetworkCheck" }
+    defaultConfig { applicationId = "org.steamlite"; minSdk = 26; targetSdk = 34; versionCode = 101; versionName = "1.0.1"; testInstrumentationRunner = "org.steamlite.ImageNetworkCheck" }
     val releaseKey = System.getenv("STEAMLITE_KEYSTORE")
     if (!releaseKey.isNullOrBlank()) signingConfigs.create("distribution") {
         storeFile = file(releaseKey)
@@ -40,4 +40,3 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:4.31.1")
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 }
-

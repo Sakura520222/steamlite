@@ -136,7 +136,7 @@ class LiteModel(app: Application) : AndroidViewModel(app) {
 fun time(value: Long) = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(value))
 
 class MainActivity : ComponentActivity() {
-    private val model get() = ViewModelProvider(this)[LiteModel::class.java]
+    private val model get() = (application as LiteApplication).model
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PublicImages.install(this)
@@ -165,6 +165,7 @@ fun LiteApp(model: LiteModel = viewModel()) {
     val unreadSessions by model.steam.recentSessions.collectAsState()
     fun open(url: String) { openSteamLink(context, url) }
 
+    LaunchedEffect(online) { if (online) context.startForegroundService(Intent(context, ConnectionService::class.java)) }
     LaunchedEffect(online) { if (!online && model.steam.owner.isBlank()) model.wishlist.clearVisible() }
     LaunchedEffect(tab) { if (tab != 2) peerId = null }
 

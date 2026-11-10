@@ -487,8 +487,8 @@ fun GameRow(
         ) {
             PosterCover(gameId, image, Modifier.size(54.dp, 72.dp))
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold, color = Text1, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.weight(1f).heightIn(min = 88.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                Text(title, fontSize = 14.5.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold, color = Text1, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(3.dp))
                 Text(meta, fontSize = 11.5.sp, color = Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(7.dp))

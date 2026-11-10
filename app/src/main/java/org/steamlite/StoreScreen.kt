@@ -61,7 +61,7 @@ fun StoreScreen(model: LiteModel, onOpenWishlist: () -> Unit = {}) {
         .sortedByDescending { it.discount }
         .take(6)
 
-    Column(Modifier.fillMaxSize()) {
+    RefreshContainer(model.loading, { model.search(query, true) }) { Column(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 28.dp)
@@ -222,6 +222,7 @@ fun StoreScreen(model: LiteModel, onOpenWishlist: () -> Unit = {}) {
         }
     }
 
+    }
     if (showFilters) {
         StoreFilterSheet(model, query, min, max, { min = it }, { max = it }) { showFilters = false }
     }
