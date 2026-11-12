@@ -40,8 +40,6 @@ import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -97,8 +95,10 @@ internal fun SteamBottomBar(
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit,
 ) {
-    val unreadFlow = remember(sessions) { sessions.map { rows -> rows.any { it.unread > 0 } }.distinctUntilChanged() }
-    val hasUnread by unreadFlow.collectAsState(sessions.value.any { it.unread > 0 })
+    val unreadSessions = sessions.collectAsState()
+    val hasUnread by remember(unreadSessions) {
+        derivedStateOf { unreadSessions.value.any { it.unread > 0 } }
+    }
     val colors = MiuixTheme.colorScheme
     val surface = colors.surfaceContainer
     val dark = isSystemInDarkTheme()
