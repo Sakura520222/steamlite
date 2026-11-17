@@ -222,6 +222,10 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
     private var retry = 0
     private var code: CompletableFuture<String>? = null
     private var authenticationJob: Job? = null
+    private val loginHandshake = SteamLoginHandshake()
+    val loginClosing = loginHandshake.closing
+    private var openingTransport: Job? = null
+    private var closingTransport: Job? = null
     private var generation = 0
     private var probe = false
     private var fallbackTried = false
@@ -262,103 +266,131 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 status.value = "认证组件初始化失败，正在修复兼容性"
             }
         }
-        manager.subscribe(ConnectedCallback::class.java) {
-            if (!active) { scope.launch { client.disconnect() }; return@subscribe }
+        manager.subscribe(ConnectedCallback::class.java) { synchronized(loginHandshake) {
+            val transport = loginHandshake.transport ?: return@subscribe
+            val attempt = generation
+            if (!isAuthenticating(attempt, transport)) return@subscribe
             watchdog?.cancel()
             if (probe) {
-                probe = false; active = false; busy.value = false; status.value = "Steam CM 安全连接成功，可以登录"
-                scope.launch { client.disconnect() }
+                probe = false
+                endLogin("Steam CM 安全连接成功，可以登录")
                 return@subscribe
             }
-            val attempt = generation
+            val scanning = qrLogin.value
+            val needsAuthentication = token.isEmpty() && loginHandshake.approved == null
+            val loginName = account
+            val secret = password
             status.value = "Steam 已连接，正在认证"
             authenticationJob = scope.launch {
                 runCatching {
-                    if (token.isEmpty()) {
+                    val result = if (needsAuthentication) {
                         val details = AuthSessionDetails().apply {
-                            username = account; password = this@SteamConnection.password; persistentSession = true
+                            username = loginName; password = secret; persistentSession = true
                             deviceFriendlyName = "Steam Lite Android"
                             authenticator = object : IAuthenticator {
-                                override fun getDeviceCode(previousCodeWasIncorrect: Boolean) = requestCode(if (previousCodeWasIncorrect) "验证码错误，请重新输入 Steam Guard" else "输入 Steam Guard 验证码")
-                                override fun getEmailCode(email: String?, previousCodeWasIncorrect: Boolean) = requestCode(if (previousCodeWasIncorrect) "验证码错误，请重新输入邮件验证码" else "输入 Steam 邮件验证码")
-                                override fun acceptDeviceConfirmation(): CompletableFuture<Boolean> {
+                                override fun getDeviceCode(previousCodeWasIncorrect: Boolean) = requestLoginCode(attempt, transport, if (previousCodeWasIncorrect) "验证码错误，请重新输入 Steam Guard" else "输入 Steam Guard 验证码")
+                                override fun getEmailCode(email: String?, previousCodeWasIncorrect: Boolean) = requestLoginCode(attempt, transport, if (previousCodeWasIncorrect) "验证码错误，请重新输入邮件验证码" else "输入 Steam 邮件验证码")
+                                override fun acceptDeviceConfirmation(): CompletableFuture<Boolean> = synchronized(loginHandshake) {
+                                    if (!isAuthenticating(attempt, transport)) return@synchronized CompletableFuture.completedFuture(false)
                                     phoneConfirmationPending.value = true
                                     needsGuardCode.value = concurrentGuardSession != null
                                     guard.value = if (needsGuardCode.value) "可在 Steam 手机应用批准登录，也可直接输入令牌码；任一方式验证成功即可登录" else "请在 Steam 官方手机应用确认此次登录，确认后将自动继续"
-                                    return CompletableFuture.completedFuture(true)
+                                    CompletableFuture.completedFuture(true)
                                 }
                             }
                         }
-                        val scanning = qrLogin.value
-                        status.value = if (scanning) "正在获取 Steam 登录二维码" else "正在请求 Steam 认证，等待 Steam Guard 挑战"
-                        val result = withTimeout(180000) {
+                        synchronized(loginHandshake) {
+                            if (!isAuthenticating(attempt, transport)) return@launch
+                            status.value = if (scanning) "正在获取 Steam 登录二维码" else "正在请求 Steam 认证，等待 Steam Guard 挑战"
+                        }
+                        withTimeout(180000) {
                             if (scanning) {
                                 val session = client.authentication.beginAuthSessionViaQR(details, this).await()
-                                ensureActive()
-                                qrChallenge.value = session.challengeUrl
-                                status.value = "等待 Steam 手机应用扫码确认"
+                                synchronized(loginHandshake) {
+                                    ensureActive()
+                                    if (!isAuthenticating(attempt, transport)) throw CancellationException()
+                                    qrChallenge.value = session.challengeUrl
+                                    status.value = "等待 Steam 手机应用扫码确认"
+                                }
                                 // Steam reports seconds. JavaSteam 1.8.0's polling loop delays in milliseconds.
                                 val intervalMillis = (session.pollingInterval * 1000).toLong().coerceAtLeast(1000L)
                                 var approval: AuthPollResult?
                                 do {
                                     delay(intervalMillis)
                                     approval = session.pollAuthSessionStatus(this).await()
-                                    ensureActive()
-                                    if (approval == null) qrChallenge.value = session.challengeUrl
+                                    synchronized(loginHandshake) {
+                                        ensureActive()
+                                        if (!isAuthenticating(attempt, transport)) throw CancellationException()
+                                        if (approval == null) qrChallenge.value = session.challengeUrl
+                                    }
                                 } while (approval == null)
                                 approval
                             } else {
                                 val session = client.authentication.beginAuthSessionViaCredentials(details).await()
-                                activeGuardSession = session
                                 session.allowedConfirmations = preferPhoneApproval(session.allowedConfirmations)
-                                if (supportsConcurrentGuard(session.allowedConfirmations)) concurrentGuardSession = session
+                                synchronized(loginHandshake) {
+                                    ensureActive()
+                                    if (!isAuthenticating(attempt, transport)) throw CancellationException()
+                                    activeGuardSession = session
+                                    if (supportsConcurrentGuard(session.allowedConfirmations)) concurrentGuardSession = session
+                                }
                                 try { session.pollingWaitForResult().await() }
-                                finally { clearConcurrentGuard(session) }
+                                finally { synchronized(loginHandshake) { clearConcurrentGuard(session) } }
                             }
-                        }
+                        }.also { details.password = null }
+                    } else null
+                    synchronized(loginHandshake) {
                         ensureActive()
-                        if (!active || generation != attempt) return@launch
-                        token = result.refreshToken; account = result.accountName
-                        this@SteamConnection.password = ""; details.password = null
+                        if (!isAuthenticating(attempt, transport)) return@launch
+                        if (result != null) {
+                            check(result.accountName.isNotBlank() && result.refreshToken.isNotBlank()) { "Steam 未返回完整的会话凭据" }
+                            loginHandshake.approve(SteamLoginHandshake.Credentials(result.accountName, result.refreshToken))
+                            password = ""
+                        }
                         if (scanning) {
                             qrChallenge.value = null
                             status.value = "扫码已确认，正在登录 Steam"
-                        } else {
-                            vault.save(JSONObject().put("account", account).put("token", token).toString())
+                        }
+                        guard.value = ""
+                        needsGuardCode.value = false
+                        loginHandshake.submit(SteamLoginHandshake.Credentials(account, token)) { credentials ->
+                            user.logOn(LogOnDetails().apply {
+                                this.username = credentials.account
+                                accessToken = credentials.token
+                                loginID = 149
+                                chatMode = ChatMode.NEW_STEAM_CHAT
+                                uiMode = EUIMode.MobileChat
+                            })
                         }
                     }
-                    guard.value = ""
-                    needsGuardCode.value = false
-                    if (!active || generation != attempt) return@launch
-                    user.logOn(LogOnDetails().apply { username = account; accessToken = token; loginID = 149; chatMode = ChatMode.NEW_STEAM_CHAT; uiMode = EUIMode.MobileChat })
-                }.onFailure { if (generation == attempt && (it !is CancellationException || it is TimeoutCancellationException)) {
-                    val cause = generateSequence(it) { failure -> failure.cause }.last()
-                    val resultCode = (cause as? AuthenticationException)?.result
-                    android.util.Log.w("SteamLiteAuth", "Authentication failed: ${cause.javaClass.simpleName}, Steam result=${resultCode ?: "unavailable"}")
-                    status.value = if(it is TimeoutCancellationException) "认证超时，请重试" else "认证失败：${resultCode ?: cause.javaClass.simpleName}"
-                    clearQrLogin()
-                    clearConcurrentGuard(); active = false; busy.value = false; password = ""; guard.value = ""; needsGuardCode.value = false; code?.cancel(true); code = null; client.disconnect()
-                } }
+                }.onFailure {
+                    synchronized(loginHandshake) {
+                        if (isAuthenticating(attempt, transport) && (it !is CancellationException || it is TimeoutCancellationException)) {
+                            val cause = generateSequence(it) { failure -> failure.cause }.last()
+                            val resultCode = (cause as? AuthenticationException)?.result
+                            android.util.Log.w("SteamLiteAuth", "Authentication failed: ${cause.javaClass.simpleName}, Steam result=${resultCode ?: "unavailable"}")
+                            endLogin(if (it is TimeoutCancellationException) "认证超时，请重试" else "认证失败：${resultCode ?: cause.javaClass.simpleName}")
+                        }
+                    }
+                }
             }
-        }
-        manager.subscribe(LoggedOnCallback::class.java) {
-            val scanned = qrLogin.value
-            if (scanned && it.result == EResult.OK) {
-                vault.save(JSONObject().put("account", account).put("token", token).toString())
+        } }
+        manager.subscribe(LoggedOnCallback::class.java) { callback ->
+            val signedIn = synchronized(loginHandshake) {
+                val steamId = client.steamID
+                // The network may already have disconnected while this result was queued.
+                // Its disconnect callback will retire the transport and retry if appropriate.
+                if (callback.result == EResult.OK && steamId == null) return@subscribe
+                loginHandshake.complete { finishLogon(callback.result, steamId, it) } == true
             }
-            clearQrLogin()
-            busy.value = false
-            if (it.result == EResult.OK) {
-                guard.value = ""; needsGuardCode.value = false
-                owner = client.steamID?.convertToUInt64().toString(); online.value = true; retry = 0; status.value = "已连接 Steam"
-                if (interactiveLogin) { interactiveLogin = false; loginSucceeded.value = true }
+            if (signedIn) {
                 scope.launch { runCatching { refreshFriendRemarks() } }
                 refreshRecentSessions()
                 scope.launch { loadSelfAvatar() }
                 scope.launch { runCatching { dao.deleteEmptyMessages() } }
                 friends.setPersonaState(EPersonaState.Online)
                 scope.launch { runCatching { withTimeout(20000) { personaChat.requestFriendPersonaStates(`in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesChatSteamclient.CChat_RequestFriendPersonaStates_Request.getDefaultInstance()).await() } } }
-            } else { guard.value = ""; needsGuardCode.value = false; interactiveLogin = false; status.value = "登录失败：${it.result}"; online.value = false; active = false; if (it.result.toString() in setOf("InvalidPassword", "Expired", "Revoked", "AccessDenied")) { token = ""; vault.clear() }; client.disconnect() }
+            }
         }
         manager.subscribe(FriendsListCallback::class.java) {
             updateFriends()
@@ -408,31 +440,54 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 remarks.update { it + (peer to event.body.nickname) }; updateFriends()
             }
         }
-        manager.subscribe(DisconnectedCallback::class.java) {
+        manager.subscribe(DisconnectedCallback::class.java) { synchronized(loginHandshake) {
             authenticationJob?.cancel()
+            loginHandshake.disconnected()
+            openingTransport = null
+            closingTransport = null
             qrChallenge.value = null
             clearConcurrentGuard()
             readingPeer = null
             if (owner.isBlank()) { remarks.value = emptyMap(); readTimes.clear() }
             voice.disconnect()
             online.value = false
-            if (active && !fallbackTried) {
-                fallbackTried = true
-                status.value = "节点连接失败，正在查询 Steam 服务器目录"
-                scope.launch { client.connect() }
-                return@subscribe
+            when {
+                !active -> busy.value = false
+                !fallbackTried -> {
+                    fallbackTried = true
+                    status.value = "节点连接失败，正在查询 Steam 服务器目录"
+                    openTransport(useDirectory = true)
+                }
+                token.isNotEmpty() || loginHandshake.approved != null -> {
+                    val attempt = generation
+                    status.value = "连接中断，正在重连"
+                    val wait = minOf(60000L, 2000L shl minOf(retry++, 5))
+                    scope.launch {
+                        delay(wait)
+                        synchronized(loginHandshake) {
+                            if (active && generation == attempt && loginHandshake.transport == null) connect()
+                        }
+                    }
+                }
+                else -> endLogin("连接失败，请重试")
             }
-            if (active && token.isNotEmpty()) scope.launch { status.value = "连接中断，正在重连"; delay(minOf(60000L, 2000L shl minOf(retry++, 5))); if (active) connect() }
-            else if (active) { clearQrLogin(); active = false; busy.value = false; watchdog?.cancel(); password = ""; status.value = "连接失败，请重试" }
+        } }
+        synchronized(loginHandshake) {
+            vault.read()?.let { saved -> runCatching {
+                val json = JSONObject(saved)
+                account = json.getString("account")
+                token = json.getString("token")
+                connect()
+            } }
         }
         scope.launch { while (isActive) { runCatching { manager.runWaitCallbacks(500) }; delay(10) } }
-        vault.read()?.let { saved -> runCatching { val json = JSONObject(saved); account = json.getString("account"); token = json.getString("token"); connect() } }
     }
-    private fun requestCode(prompt: String): CompletableFuture<String> {
+    private fun requestLoginCode(attempt: Int, transport: SteamLoginHandshake.Transport, prompt: String): CompletableFuture<String> = synchronized(loginHandshake) {
+        if (!isAuthenticating(attempt, transport)) return@synchronized CompletableFuture<String>().apply { cancel(false) }
         phoneConfirmationPending.value = false; guardCodeSubmitting.value = false
         val pending = CompletableFuture<String>()
         code = pending; guard.value = prompt; needsGuardCode.value = true
-        return pending
+        pending
     }
     fun submitCode(value: String) {
         val entered = value.trim().uppercase(java.util.Locale.ROOT)
@@ -463,28 +518,74 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         code = null; needsGuardCode.value = false; guard.value = "正在验证验证码"
         pending.complete(entered)
     }
-    fun login(name: String, pass: String) { if (active) return; if(!authReady) { status.value = "加密组件尚未准备完成，请稍后重试"; return }; probe = false; interactiveLogin = true; loginSucceeded.value = false; guard.value = ""; generation++; account = name.trim(); password = pass; token = ""; connect() }
-    fun cancelLogin() {
-        if (online.value) return
-        if (qrLogin.value) token = ""
-        clearQrLogin()
-        clearConcurrentGuard()
-        active = false; generation++; interactiveLogin = false; busy.value = false
-        watchdog?.cancel(); authenticationJob?.cancel(); code?.cancel(true); code = null
-        password = ""; guard.value = ""; needsGuardCode.value = false; status.value = "登录已取消"
-        scope.launch { client.disconnect() }
+    fun login(name: String, pass: String) = synchronized(loginHandshake) {
+        if (!canStartLogin()) return@synchronized
+        if (!authReady) { status.value = "加密组件尚未准备完成，请稍后重试"; return@synchronized }
+        startInteractiveLogin(name.trim(), pass, scanning = false)
     }
-    fun loginWithQr() {
-        if (active || online.value) return
+
+    fun cancelLogin() = synchronized(loginHandshake) {
+        if (!active || online.value) return@synchronized
+        token = ""
+        endLogin("登录已取消")
+    }
+
+    fun loginWithQr() = synchronized(loginHandshake) {
+        if (!canStartLogin()) return@synchronized
+        startInteractiveLogin("", "", scanning = true)
+    }
+
+    private fun canStartLogin() = !active && !online.value && loginHandshake.transport == null
+
+    private fun finishLogon(result: EResult, steamId: SteamID?, logon: SteamLoginHandshake.Logon): Boolean {
+        if (result != EResult.OK) {
+            if (!logon.persist && result in setOf(EResult.InvalidPassword, EResult.Expired, EResult.Revoked, EResult.AccessDenied)) {
+                token = ""
+                vault.clear()
+            }
+            endLogin("登录失败：$result")
+            return false
+        }
+        val credentials = logon.credentials
+        if (logon.persist) {
+            val saved = runCatching {
+                vault.save(JSONObject().put("account", credentials.account).put("token", credentials.token).toString())
+            }
+            if (saved.isFailure) {
+                endLogin("无法保存 Steam 会话，请重试")
+                return false
+            }
+        }
+        account = credentials.account
+        token = credentials.token
+        owner = checkNotNull(steamId).convertToUInt64().toString()
+        online.value = true
+        retry = 0
+        status.value = "已连接 Steam"
+        guard.value = ""
+        needsGuardCode.value = false
+        clearQrLogin()
+        busy.value = false
+        if (interactiveLogin) {
+            interactiveLogin = false
+            loginSucceeded.value = true
+        }
+        return true
+    }
+
+    private fun isAuthenticating(attempt: Int, transport: SteamLoginHandshake.Transport) =
+        active && generation == attempt && loginHandshake.transport === transport && !loginHandshake.closing.value
+
+    private fun startInteractiveLogin(name: String, pass: String, scanning: Boolean) {
         probe = false
         interactiveLogin = true
         loginSucceeded.value = false
         guard.value = ""
         generation++
-        account = ""
-        password = ""
+        account = name
+        password = pass
         token = ""
-        qrLogin.value = true
+        qrLogin.value = scanning
         connect()
     }
 
@@ -492,23 +593,84 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         qrChallenge.value = null
         qrLogin.value = false
     }
-    fun resumeSession() {
-        if (token.isNotBlank() && !online.value && !busy.value) connect()
+    fun resumeSession() = synchronized(loginHandshake) {
+        if (token.isNotBlank() && canStartLogin()) connect()
     }
-    fun probeConnection() { if(active) return; probe = true; connect() }
+
+    fun probeConnection() = synchronized(loginHandshake) {
+        if (!canStartLogin()) return@synchronized
+        probe = true
+        connect()
+    }
+
+    private fun endLogin(message: String, logOff: Boolean = false) {
+        active = false
+        generation++
+        interactiveLogin = false
+        probe = false
+        loginHandshake.discardApproval()
+        clearQrLogin()
+        clearConcurrentGuard()
+        watchdog?.cancel()
+        authenticationJob?.cancel()
+        code?.cancel(true)
+        code = null
+        password = ""
+        guard.value = ""
+        needsGuardCode.value = false
+        online.value = false
+        busy.value = loginHandshake.transport != null
+        status.value = message
+        disconnectTransport(logOff)
+    }
+
     private fun connect() {
         active = true; busy.value = true; fallbackTried = false; status.value = "正在连接 Steam"
+        openTransport(useDirectory = false)
+    }
+
+    private fun openTransport(useDirectory: Boolean) {
+        val transport = loginHandshake.openTransport()
+        busy.value = true
         val attempt = generation
         watchdog?.cancel()
         watchdog = scope.launch {
             delay(45000)
-            if(active && !client.isConnected && generation == attempt) {
-                clearQrLogin()
-                active = false; busy.value = false; password = ""; status.value = "Steam 连接超时，请检查网络后重试"; client.disconnect()
+            synchronized(loginHandshake) {
+                if (isAuthenticating(attempt, transport) && !client.isConnected) endLogin("Steam 连接超时，请检查网络后重试")
             }
         }
-        scope.launch {
-            runCatching { client.connect(ServerRecord.createWebSocketServer(SmartCMServerList.defaultServerWebSocket)) }.onFailure { clearQrLogin(); active = false; busy.value = false; password = ""; status.value = "Steam 连接异常（${it.javaClass.simpleName}）" }
+        openingTransport = scope.launch {
+            runCatching {
+                if (useDirectory) client.connect()
+                else client.connect(ServerRecord.createWebSocketServer(SmartCMServerList.defaultServerWebSocket))
+            }.onFailure {
+                synchronized(loginHandshake) {
+                    if (loginHandshake.transport !== transport) return@synchronized
+                    // A failure before JavaSteam creates a transport has no disconnect callback.
+                    if (client.isDisconnected) loginHandshake.disconnected()
+                    if (active) endLogin("Steam 连接异常（${it.javaClass.simpleName}）")
+                    else if (loginHandshake.transport == null) busy.value = false
+                }
+            }
+        }
+    }
+
+    private fun disconnectTransport(logOff: Boolean) {
+        val transport = loginHandshake.closeTransport() ?: return
+        val opening = openingTransport
+        closingTransport = scope.launch {
+            opening?.join()
+            synchronized(loginHandshake) {
+                if (loginHandshake.transport !== transport) return@synchronized
+                // JavaSteam queues callbacks without request IDs. Wait for its disconnect
+                // event to retire this transport before permitting another logon.
+                if (logOff) {
+                    runCatching { user.logOff() }.onFailure { client.disconnect() }
+                } else {
+                    client.disconnect()
+                }
+            }
         }
     }
     private val personaGameNames = java.util.concurrent.ConcurrentHashMap<Int, String>()
@@ -752,6 +914,46 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         throw IllegalStateException(if (add) "Steam 未在预期时间内显示该游戏，已回读但未确认" else "Steam 未在预期时间内移除该游戏，已回读但未确认")
     }
     suspend fun probeStoreSession(): String = storeWeb.probeStore()
-    fun logout() { voice.disconnect(); friendPublishJob?.cancel(); gameTitleRetryJob?.cancel(); gameTitleRetries.clear(); gameTitlesLoading.value = false; personaGameJob?.cancel(); pendingPersonaGames.clear(); requestedPersonaGames.clear(); personaGameNames.clear(); personaHandler.snapshots.clear(); stickers.value = emptyList(); pinnedFriends.value = emptySet(); recentJob?.cancel(); recentSessions.value = emptyList(); storeWeb.invalidate(); historyJob?.cancel(); historyRequest++; historyLoading.value = false; hasMoreHistory.value = false; historyCursors.clear(); notifications.clear(); generation++; owner = ""; active = false; busy.value = false; watchdog?.cancel(); authenticationJob?.cancel(); online.value = false; selfAvatar.value = ""; code?.cancel(true); code = null; guard.value = ""; needsGuardCode.value = false; token = ""; password = ""; vault.clear(); people.value = emptyList(); status.value = "未登录"; scope.launch { user.logOff(); client.disconnect(); dao.clearMessages() } }
-    fun close() { voice.disconnect(); storeWeb.invalidate(); active = false; authenticationJob?.cancel(); LogManager.removeListener(diagnostics); scope.launch { client.disconnect(); scope.cancel() } }
+    fun logout() {
+        synchronized(loginHandshake) {
+            endLogin("未登录", logOff = online.value)
+            owner = ""
+            token = ""
+            vault.clear()
+        }
+        voice.disconnect()
+        friendPublishJob?.cancel()
+        gameTitleRetryJob?.cancel()
+        gameTitleRetries.clear()
+        gameTitlesLoading.value = false
+        personaGameJob?.cancel()
+        pendingPersonaGames.clear()
+        personaGameNames.clear()
+        personaHandler.snapshots.clear()
+        stickers.value = emptyList()
+        pinnedFriends.value = emptySet()
+        recentJob?.cancel()
+        recentSessions.value = emptyList()
+        storeWeb.invalidate()
+        historyJob?.cancel()
+        historyRequest++
+        historyLoading.value = false
+        hasMoreHistory.value = false
+        historyCursors.clear()
+        notifications.clear()
+        selfAvatar.value = ""
+        people.value = emptyList()
+        scope.launch { dao.clearMessages() }
+    }
+
+    fun close() {
+        val disconnect = synchronized(loginHandshake) {
+            endLogin("未登录")
+            closingTransport
+        }
+        voice.disconnect()
+        storeWeb.invalidate()
+        LogManager.removeListener(diagnostics)
+        scope.launch { disconnect?.join(); scope.cancel() }
+    }
 }
