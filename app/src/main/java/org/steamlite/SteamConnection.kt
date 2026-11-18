@@ -660,7 +660,8 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         val transport = loginHandshake.closeTransport() ?: return
         val opening = openingTransport
         closingTransport = scope.launch {
-            opening?.join()
+            // A hung connect() must not stall closing forever.
+            runCatching { withTimeout(5000) { opening?.join() } }
             synchronized(loginHandshake) {
                 if (loginHandshake.transport !== transport) return@synchronized
                 // JavaSteam queues callbacks without request IDs. Wait for its disconnect
@@ -670,8 +671,28 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 } else {
                     client.disconnect()
                 }
+                // JavaSteam does not guarantee a DisconnectedCallback: disconnecting without
+                // a connection is a no-op and a failed socket close can skip the callback.
+                // Retire the transport ourselves once the client is already down.
+                if (client.isDisconnected) retireClosedTransport()
+            }
+            if (loginHandshake.transport !== transport) return@launch
+            delay(5000)
+            synchronized(loginHandshake) {
+                if (loginHandshake.transport !== transport) return@synchronized
+                // The disconnect callback never arrived; force the transport open again so
+                // a wedged closing state cannot lock out the next login.
+                retireClosedTransport()
             }
         }
+    }
+
+    /** Same teardown the DisconnectedCallback handler performs when its event arrives. */
+    private fun retireClosedTransport() {
+        loginHandshake.disconnected()
+        openingTransport = null
+        closingTransport = null
+        busy.value = false
     }
     private val personaGameNames = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val personaGameIcons = java.util.concurrent.ConcurrentHashMap<Int, String>()
@@ -928,6 +949,7 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
         gameTitlesLoading.value = false
         personaGameJob?.cancel()
         pendingPersonaGames.clear()
+        requestedPersonaGames.clear()
         personaGameNames.clear()
         personaHandler.snapshots.clear()
         stickers.value = emptyList()
