@@ -526,7 +526,7 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
 
     fun cancelLogin() = synchronized(loginHandshake) {
         if (!active || online.value) return@synchronized
-        token = ""
+        if (interactiveLogin) token = ""
         endLogin("登录已取消")
     }
 
