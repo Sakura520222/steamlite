@@ -263,6 +263,7 @@ private fun LoginCard(model: LiteModel) {
     var password by remember { mutableStateOf("") }
     val guard by model.steam.guard.collectAsState()
     val busy by model.steam.busy.collectAsState()
+    val closing by model.steam.loginClosing.collectAsState()
     LaunchedEffect(guard) { if (guard.isNotEmpty()) password = "" }
 
     val shape = RoundedCornerShape(18.dp)
@@ -284,13 +285,17 @@ private fun LoginCard(model: LiteModel) {
 
         Spacer(Modifier.height(14.dp))
         AccentButton(
-            if (busy) "登录处理中…" else "登录 Steam",
+            when {
+                closing -> "正在断开 Steam 连接…"
+                busy -> "登录处理中…"
+                else -> "登录 Steam"
+            },
             { model.steam.login(username, password) },
             Modifier.fillMaxWidth(),
             enabled = !busy && username.isNotBlank() && password.isNotEmpty()
         )
 
-        if (busy) {
+        if (busy && !closing) {
             Spacer(Modifier.height(10.dp))
             Text("正在连接 Steam，可能需要几秒", fontSize = 10.5.sp, color = Text3)
             Spacer(Modifier.height(8.dp))

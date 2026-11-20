@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.IBinder
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 
 class LiteApplication : Application() {
     val model by lazy { LiteModel(this) }
@@ -24,8 +25,8 @@ class ConnectionService : Service() {
         startForeground(42, notification("保持 Steam 消息连接"))
         val steam = (application as LiteApplication).model.steam
         scope.launch { while (isActive) { delay(30_000); steam.resumeSession() } }
-        scope.launch { steam.status.collectLatest { status ->
-            if (!steam.online.value && steam.owner.isBlank() && !steam.busy.value) stopSelf()
+        scope.launch { steam.status.combine(steam.busy) { status, busy -> status to busy }.collectLatest { (status, busy) ->
+            if (!steam.online.value && steam.owner.isBlank() && !busy) stopSelf()
             else manager.notify(42, notification(if (steam.online.value) "Steam 已连接 · 后台接收消息" else status))
         } }
     }
