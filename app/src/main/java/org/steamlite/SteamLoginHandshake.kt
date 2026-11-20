@@ -30,10 +30,12 @@ internal class SteamLoginHandshake {
         return current
     }
 
-    fun disconnected() {
+    fun disconnected(expected: Transport? = transport): Boolean {
+        if (transport !== expected) return false
         transport = null
         closingState.value = false
         submitted = null
+        return true
     }
 
     fun approve(credentials: Credentials) {
@@ -44,8 +46,14 @@ internal class SteamLoginHandshake {
         check(transport != null && !closing.value && submitted == null)
         val fresh = approved
         val credentials = fresh ?: saved
-        submitted = Logon(credentials, persist = fresh != null)
-        send(credentials)
+        val logon = Logon(credentials, persist = fresh != null)
+        submitted = logon
+        try {
+            send(credentials)
+        } catch (error: Throwable) {
+            if (submitted === logon) submitted = null
+            throw error
+        }
     }
 
     fun <T> complete(accept: (Logon) -> T): T? {

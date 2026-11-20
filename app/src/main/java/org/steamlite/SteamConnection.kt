@@ -441,6 +441,8 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
             }
         }
         manager.subscribe(DisconnectedCallback::class.java) { synchronized(loginHandshake) {
+            // A queued event from the retired socket must not tear down an online replacement.
+            if (client.isConnected) return@subscribe
             authenticationJob?.cancel()
             loginHandshake.disconnected()
             openingTransport = null
@@ -666,15 +668,14 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 if (loginHandshake.transport !== transport) return@synchronized
                 // JavaSteam queues callbacks without request IDs. Wait for its disconnect
                 // event to retire this transport before permitting another logon.
-                if (logOff) {
-                    runCatching { user.logOff() }.onFailure { client.disconnect() }
-                } else {
-                    client.disconnect()
-                }
+                val hadConnection = !client.isDisconnected
+                runCatching {
+                    if (logOff) user.logOff() else client.disconnect()
+                }.onFailure { runCatching { client.disconnect() } }
                 // JavaSteam does not guarantee a DisconnectedCallback: disconnecting without
                 // a connection is a no-op and a failed socket close can skip the callback.
                 // Retire the transport ourselves once the client is already down.
-                if (client.isDisconnected) retireClosedTransport()
+                if (!hadConnection) retireClosedTransport(transport)
             }
             if (loginHandshake.transport !== transport) return@launch
             delay(5000)
@@ -682,14 +683,14 @@ class SteamConnection(private val vault: SessionVault, private val dao: CacheDao
                 if (loginHandshake.transport !== transport) return@synchronized
                 // The disconnect callback never arrived; force the transport open again so
                 // a wedged closing state cannot lock out the next login.
-                retireClosedTransport()
+                retireClosedTransport(transport)
             }
         }
     }
 
-    /** Same teardown the DisconnectedCallback handler performs when its event arrives. */
-    private fun retireClosedTransport() {
-        loginHandshake.disconnected()
+    /** Completes transport cleanup after endLogin has already cleared the logical session. */
+    private fun retireClosedTransport(transport: SteamLoginHandshake.Transport) {
+        if (!loginHandshake.disconnected(transport)) return
         openingTransport = null
         closingTransport = null
         busy.value = false

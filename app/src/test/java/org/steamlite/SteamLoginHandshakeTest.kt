@@ -64,4 +64,30 @@ class SteamLoginHandshakeTest {
             assertFalse(it.persist)
         }
     }
+
+    @Test fun retiredTransportCannotClearNewTransportOrItsSubmittedLogon() {
+        val login = SteamLoginHandshake()
+        val old = login.openTransport()
+        login.closeTransport()
+        assertTrue(login.disconnected(old))
+        val current = login.openTransport()
+        login.approve(approved)
+        login.submit(existing) {}
+        assertFalse(login.disconnected(old))
+        assertSame(current, login.transport)
+        assertNotNull(login.complete { it.credentials })
+    }
+
+    @Test fun synchronousSendFailureAllowsRetryWithTheSameApproval() {
+        val login = SteamLoginHandshake()
+        login.openTransport()
+        login.approve(approved)
+        assertThrows(IllegalStateException::class.java) {
+            login.submit(existing) { error("socket closed before send") }
+        }
+        login.complete { fail("A failed send must not consume a later callback") }
+        assertSame(approved, login.approved)
+        login.submit(existing) { assertSame(approved, it) }
+        assertSame(approved, login.complete { it.credentials })
+    }
 }
